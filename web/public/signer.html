@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1" />
+<title>MultiSig Signer</title>
+<style>
+  :root {
+    --bg: #0b0e14; --panel: #131722; --panel-2: #1a2030; --border: #262d3f;
+    --text: #e6e9f0; --muted: #8b93a7; --accent: #6d8bff;
+    --good: #3ecf8e; --bad: #ef5a6c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: "Segoe UI", -apple-system, sans-serif;
+    padding: 16px; max-width: 480px; margin: 0 auto;
+  }
+  h1 { font-size: 18px; margin: 8px 0 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 14px; padding: 16px; margin-bottom: 14px;
+  }
+  .step-label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+  button {
+    width: 100%; padding: 12px; border: none; border-radius: 10px;
+    background: var(--accent); color: #08101f; font-weight: 700; font-size: 15px;
+    cursor: pointer; margin-top: 8px;
+  }
+  button:disabled { opacity: 0.4; }
+  button.secondary { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); }
+  video { width: 100%; border-radius: 10px; background: #000; margin-top: 10px; }
+  .mono { font-family: Consolas, monospace; font-size: 12px; word-break: break-all; color: var(--text); }
+  .row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+  .row:last-child { border-bottom: none; }
+  .row .k { color: var(--muted); }
+  .alert { padding: 10px 12px; border-radius: 9px; font-size: 13px; margin-top: 10px; }
+  .alert.error { background: rgba(239,90,108,0.12); color: #ffb3bc; }
+  .alert.success { background: rgba(62,207,142,0.1); color: #a9f0cf; }
+  .qr-box { background: #fff; padding: 12px; border-radius: 12px; display: inline-flex; margin-top: 10px; }
+  .badge { display: inline-block; font-size: 12px; padding: 3px 9px; border-radius: 999px; background: var(--panel-2); border: 1px solid var(--border); color: var(--muted); }
+  input[type=file] { color: var(--muted); font-size: 12px; margin-top: 8px; }
+</style>
+</head>
+<body>
+  <h1>🔏 MultiSig Signer</h1>
+  <p class="sub">
+    Buka halaman ini lewat <strong>dApp browser</strong> di wallet app kamu
+    (MetaMask / Trust Wallet / dll), bukan Chrome/Safari biasa — supaya wallet
+    kamu bisa dipakai untuk tanda tangan.
+  </p>
+
+  <div class="card" id="step-scan">
+    <div class="step-label">Langkah 1</div>
+    <button id="btn-scan">📷 Scan QR Transaksi dari Coordinator</button>
+    <video id="video" playsInline muted style="display:none"></video>
+    <div style="margin-top:8px">
+      <label class="sub">Atau upload foto QR</label><br/>
+      <input type="file" id="file-input" accept="image/*" />
+    </div>
+    <div id="scan-error"></div>
+  </div>
+
+  <div class="card" id="step-review" style="display:none">
+    <div class="step-label">Langkah 2 — Review Transaksi</div>
+    <div id="r-note" class="alert info" style="display:none"></div>
+    <div class="row"><span class="k">To</span><span class="mono" id="r-to"></span></div>
+    <div class="row"><span class="k">Value</span><span id="r-value"></span></div>
+    <div class="row" id="row-data"><span class="k">Data</span><span class="mono" id="r-data"></span></div>
+    <div class="row"><span class="k">Nonce</span><span id="r-nonce"></span></div>
+    <div class="row"><span class="k">Contract</span><span class="mono" id="r-contract"></span></div>
+    <div class="row"><span class="k">Chain ID</span><span id="r-chain"></span></div>
+    <button id="btn-connect">Connect Wallet</button>
+    <div id="connected-badge"></div>
+    <button id="btn-sign" disabled>✍️ Tanda Tangani (EIP-712)</button>
+    <div id="sign-error"></div>
+  </div>
+
+  <div class="card" id="step-done" style="display:none">
+    <div class="step-label">Langkah 3 — Selesai</div>
+    <p class="sub">Tunjukkan QR ini ke kamera coordinator untuk dipindai balik.</p>
+    <div id="qr-out" class="qr-box"></div>
+    <p class="sub">Signer: <span class="mono" id="r-signer"></span></p>
+    <button class="secondary" id="btn-reset">Scan Transaksi Lain</button>
+  </div>
+
+<script src="https://cdn.jsdelivr.net/npm/ethers@6.17.0/dist/ethers.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  let txPayload = null;
+  let stream = null;
+  let rafId = null;
+
+  function showError(el, msg) {
+    el.innerHTML = msg ? `<div class="alert error">${msg}</div>` : "";
+  }
+
+  function stopCamera() {
+    if (rafId) cancelAnimationFrame(rafId);
+    if (stream) stream.getTracks().forEach((t) => t.stop());
+    $("video").style.display = "none";
+  }
+
+  async function startCamera() {
+    showError($("scan-error"), "");
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+      const video = $("video");
+      video.style.display = "block";
+      video.srcObject = stream;
+      await video.play();
+      const canvas = document.createElement("canvas");
+      const ctx = canvas.getContext("2d");
+      function tick() {
+        if (video.readyState === video.HAVE_ENOUGH_DATA) {
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          const code = jsQR(imgData.data, imgData.width, imgData.height);
+          if (code && code.data) {
+            stopCamera();
+            handleScanned(code.data);
+            return;
+          }
+        }
+        rafId = requestAnimationFrame(tick);
+      }
+      tick();
+    } catch (e) {
+      showError($("scan-error"), "Tidak bisa akses kamera. Coba upload foto QR di bawah.");
+    }
+  }
+
+  function handleFile(e) {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = img.width;
+      canvas.height = img.height;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0);
+      const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const code = jsQR(imgData.data, imgData.width, imgData.height);
+      if (code && code.data) {
+        handleScanned(code.data);
+      } else {
+        showError($("scan-error"), "QR tidak terbaca dari gambar itu.");
+      }
+    };
+    img.src = URL.createObjectURL(file);
+  }
+
+  function handleScanned(text) {
+    let parsed;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      showError($("scan-error"), "QR ini bukan data transaksi yang valid.");
+      return;
+    }
+    if (!parsed.to || parsed.nonce === undefined || !parsed.verifyingContract) {
+      showError($("scan-error"), "QR ini bukan QR transaksi MultiSig.");
+      return;
+    }
+    txPayload = parsed;
+
+    const noteEl = $("r-note");
+    if (parsed.note) {
+      noteEl.style.display = "block";
+      noteEl.textContent = parsed.note;
+    } else {
+      noteEl.style.display = "none";
+    }
+
+    if (parsed.kind === "token" && parsed.tokenSymbol) {
+      $("r-value").textContent = `${parsed.tokenAmount} ${parsed.tokenSymbol} -> ${parsed.tokenRecipient}`;
+      $("row-data").style.display = "none";
+    } else {
+      let readableValue = parsed.value;
+      try { readableValue = ethers.formatEther(parsed.value) + " (native)"; } catch (e) {}
+      $("r-value").textContent = readableValue;
+      $("row-data").style.display = "flex";
+      $("r-data").textContent = parsed.data || "0x";
+    }
+
+    $("r-to").textContent = parsed.to;
+    $("r-nonce").textContent = parsed.nonce;
+    $("r-contract").textContent = parsed.verifyingContract;
+    $("r-chain").textContent = parsed.chainId;
+    $("step-review").style.display = "block";
+    $("step-review").scrollIntoView({ behavior: "smooth" });
+  }
+
+  let signerAddress = null;
+
+  async function connectWallet() {
+    if (!window.ethereum) {
+      showError($("sign-error"), "Wallet provider tidak terdeteksi — pastikan halaman ini dibuka lewat dApp browser wallet kamu.");
+      return;
+    }
+    try {
+      const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
+      signerAddress = accounts[0];
+      $("connected-badge").innerHTML = `<span class="badge">Connected: ${signerAddress.slice(0,6)}...${signerAddress.slice(-4)}</span>`;
+      $("btn-sign").disabled = false;
+    } catch (e) {
+      showError($("sign-error"), "Gagal connect wallet.");
+    }
+  }
+
+  async function signTransaction() {
+    showError($("sign-error"), "");
+    if (!txPayload || !signerAddress) return;
+    const domain = {
+      name: "MultiSigWallet",
+      version: "1",
+      chainId: Number(txPayload.chainId),
+      verifyingContract: txPayload.verifyingContract,
+    };
+    const types = {
+      Transaction: [
+        { name: "to", type: "address" },
+        { name: "value", type: "uint256" },
+        { name: "data", type: "bytes" },
+        { name: "nonce", type: "uint256" },
+      ],
+    };
+    const message = {
+      to: txPayload.to,
+      value: txPayload.value,
+      data: txPayload.data || "0x",
+      nonce: txPayload.nonce,
+    };
+    try {
+      const provider = new ethers.BrowserProvider(window.ethereum);
+      const signer = await provider.getSigner();
+      const signature = await signer.signTypedData(domain, types, message);
+      const out = {
+        signer: signerAddress,
+        signature,
+        to: txPayload.to,
+        value: txPayload.value,
+        data: txPayload.data || "0x",
+        nonce: txPayload.nonce,
+        chainId: txPayload.chainId,
+        verifyingContract: txPayload.verifyingContract,
+      };
+      $("r-signer").textContent = signerAddress;
+      const qrDiv = $("qr-out");
+      qrDiv.innerHTML = "";
+      const canvas = document.createElement("canvas");
+      qrDiv.appendChild(canvas);
+      await QRCode.toCanvas(canvas, JSON.stringify(out), { width: 260, margin: 1 });
+      $("step-done").style.display = "block";
+      $("step-done").scrollIntoView({ behavior: "smooth" });
+    } catch (e) {
+      showError($("sign-error"), (e && (e.shortMessage || e.message)) || "Tanda tangan dibatalkan atau gagal.");
+    }
+  }
+
+  function reset() {
+    txPayload = null;
+    signerAddress = null;
+    $("step-review").style.display = "none";
+    $("step-done").style.display = "none";
+    $("connected-badge").innerHTML = "";
+    $("btn-sign").disabled = true;
+    $("file-input").value = "";
+  }
+
+  $("btn-scan").addEventListener("click", startCamera);
+  $("file-input").addEventListener("change", handleFile);
+  $("btn-connect").addEventListener("click", connectWallet);
+  $("btn-sign").addEventListener("click", signTransaction);
+  $("btn-reset").addEventListener("click", reset);
+})();
+</script>
+</body>
+</html>
