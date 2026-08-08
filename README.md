@@ -2,7 +2,7 @@
 
 # MultiSigWallet
 
-### A personal M-of-N EVM multisig you deploy, hold, and run — alone.
+### Your own M-of-N EVM multisig — deployed, held, and run entirely by you.
 
 No Gnosis Safe. No relayer. No hosted dashboard. No third party, anywhere in the stack.
 
@@ -16,23 +16,25 @@ No Gnosis Safe. No relayer. No hosted dashboard. No third party, anywhere in the
 
 ---
 
-## Why this exists
 
-Crypto was supposed to mean *you* hold the keys — not a company, not a
-frontend, not a "service" that can go down, get hacked, or get shut off.
-Somewhere along the way, multisig quietly became synonymous with logging
-into someone else's website.
 
-This project is a small push back toward the original idea: a wallet that
-needs nothing but math and your own signatures to move funds. One file.
-No dependencies. No dashboard to trust.
+I got tired of "self-custody" multisig tools that still made me trust
+somebody else's server, somebody else's frontend, somebody else's uptime.
+A wallet that needs a company to stay online isn't really *yours* — it's
+rented.
 
-It doesn't matter if the balance inside is small — that was never the
-point. The point is proving that self-custody at the multisig level can
-still be **simple**, **transparent**, **auditable by anyone**, and
-**owned by no one but you.**
+So I built the version I actually wanted: a contract I deploy myself, a
+CLI I can read top to bottom, and a local web UI that never talks to a
+backend I don't control. No account to create, no service that can be
+shut down, no middleman who can freeze anything. If GitHub disappeared
+tomorrow, the wallet would keep working exactly the same, because nothing
+about it depends on anyone but the owners who signed.
 
-> If you're securing a fortune, get a professional audit first.
+It doesn't need to secure a fortune to be worth building. The point was
+proving that self-custody at the multisig level can still be simple,
+readable, and owned by no one but the people holding the keys.
+
+> If you're securing serious funds, get a professional audit first.
 > If you're securing your own stack and want to understand — and
 > control — every line that touches it, this is for you.
 
@@ -44,8 +46,8 @@ still be **simple**, **transparent**, **auditable by anyone**, and
 - [Setup](#setup)
 - [Compile & test](#compile--test)
 - [Deploy](#deploy)
-- [Daily operations](#daily-operations-cli)
-- [Web coordinator app](#web-coordinator-app)
+- [Usage — CLI](#usage--cli)
+- [Usage — Web coordinator app](#usage--web-coordinator-app)
 - [Security](#security)
 - [License](#license)
 
@@ -99,12 +101,13 @@ Save the deployed address into `.env` as `WALLET_ADDRESS`.
 
 ---
 
-## Daily operations (CLI)
+## Usage — CLI
 
 **1. Check wallet status**
 ```bash
 node cli/multisig-cli.js info
 ```
+Shows the current owners, threshold, and nonce straight from the contract.
 
 **2. Each consenting owner signs — off-chain, no gas required**
 ```bash
@@ -147,13 +150,10 @@ it does **not** need to be an owner.
 
 ---
 
-## Web coordinator app
+## Usage — Web coordinator app
 
-Prefer a UI over the CLI? `web/` is a local-only web app (no backend, no
-third-party relay) that covers the same flow visually: connect a wallet,
-view multi-chain EVM balances, deploy new 3-of-5 wallets, and collect owner
-signatures via **manual QR codes** (camera-to-camera, no WalletConnect) before
-executing a transaction.
+Prefer a UI over the CLI? `web/` is a local-only web app — no backend, no
+third-party relay — that covers the same flow visually.
 
 ```bash
 # Windows
@@ -163,8 +163,28 @@ web.bat
 ./web.sh
 ```
 
-See [`web/README.md`](web/README.md) for the full flow, including how owners
-sign from `signer.html` on their phone's wallet dApp browser.
+This installs dependencies on first run and opens the app automatically
+at `http://localhost:5173` (or similar).
+
+**Flow:**
+
+1. **Connect** — click *Connect Wallet A* to link your browser wallet
+   (MetaMask or any injected wallet).
+2. **Dashboard** — pick a deployed multisig from the wallet switcher to see
+   its live on-chain balance, owners, and threshold.
+3. **Multi Sign → Deploy** — enter 5 owner addresses and deploy a fresh
+   3-of-5 contract straight from your connected wallet.
+4. **Kirim Dana (Send Funds)** — build a transaction (native token or
+   ERC-20), then collect signatures either:
+   - **Directly in this browser**, if an owner is physically at the same
+     computer — switch accounts via the wallet's permission popup and sign
+     with no camera involved, or
+   - **Via QR**, for a remote owner — they open `signer.html` on their
+     phone's wallet dApp browser, scan the transaction QR, sign, and the
+     resulting signature QR is scanned back in.
+5. Once enough signatures are collected, hit **Execute** to broadcast.
+
+See [`web/README.md`](web/README.md) for more detail on the QR signing flow.
 
 ---
 
